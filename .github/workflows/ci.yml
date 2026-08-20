@@ -16,7 +16,7 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.7.12'   # مهم جداً: نفس إصدار مشروعك
+          flutter-version: '3.7.12'
           channel: 'stable'
 
       - name: Install dependencies
@@ -31,7 +31,7 @@ jobs:
       - name: Run tests with coverage
         run: flutter test --coverage
 
-      - name: Build debug APK (تأكد من نجاح البناء)
+      - name: Build debug APK 
         run: flutter build apk --debug
 
       - name: Build web (تأكد من نجاح الويب)
