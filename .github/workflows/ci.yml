@@ -1,4 +1,4 @@
-name: CI - Quality & Tests
+name: CI - Quality & Tests (No signing)
 
 on:
   pull_request:
@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -31,8 +31,5 @@ jobs:
       - name: Run tests with coverage
         run: flutter test --coverage
 
-      - name: Build debug APK 
+      - name: Build debug APK (no signing needed)
         run: flutter build apk --debug
-
-      - name: Build web (تأكد من نجاح الويب)
-        run: flutter build web --release
