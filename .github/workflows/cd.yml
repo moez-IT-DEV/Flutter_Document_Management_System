@@ -33,7 +33,7 @@ jobs:
           echo "storeFile=upload-keystore.jks" >> android/key.properties
 
       - name: Build APK release
-        run: flutter build apk --release --dart-define=ENVIRONMENT=production
+        run: flutter run
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v5
