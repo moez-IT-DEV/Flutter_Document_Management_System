@@ -33,7 +33,7 @@ jobs:
           echo "storeFile=upload-keystore.jks" >> android/key.properties
 
       - name: Build APK release
-        run: flutter run
+        run: flutter run -d chrome
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v5
