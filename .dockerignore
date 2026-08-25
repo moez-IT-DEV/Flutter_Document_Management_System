@@ -1,0 +1,8 @@
+.dart_tool/
+.git/
+build/
+.idea/
+*.iml
+Dockerfile
+docker-compose.yml
+README.md
