@@ -1,4 +1,4 @@
-name: CD - Build & Push Docker Image
+name: CD - Build & Push to GHCR + Docker Hub
 
 on:
   push:
@@ -31,6 +31,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
+      # تسجيل الدخول إلى GHCR
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v4
         with:
@@ -38,7 +39,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set lowercase repository name
+      # تسجيل الدخول إلى Docker Hub
+      - name: Login to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_TOKEN }}
+
+      - name: Set lowercase repository name for GHCR
         run: echo "REPO_LOWER=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
 
       - name: Set image tags
@@ -46,7 +54,7 @@ jobs:
           echo "SHORT_SHA=$(echo ${GITHUB_SHA} | cut -c1-7)" >> $GITHUB_ENV
           echo "IMAGE_VERSION=1.0.${GITHUB_RUN_NUMBER}" >> $GITHUB_ENV
 
-      - name: Build and push Docker image
+      - name: Build and push to both registries
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -54,3 +62,5 @@ jobs:
           tags: |
             ghcr.io/${{ env.REPO_LOWER }}:${{ env.IMAGE_VERSION }}
             ghcr.io/${{ env.REPO_LOWER }}:${{ env.IMAGE_VERSION }}-${{ env.SHORT_SHA }}
+            ${{ secrets.DOCKER_HUB_USERNAME }}/flutter-dms:${{ env.IMAGE_VERSION }}
+            ${{ secrets.DOCKER_HUB_USERNAME }}/flutter-dms:${{ env.IMAGE_VERSION }}-${{ env.SHORT_SHA }}
