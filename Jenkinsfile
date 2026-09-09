@@ -8,7 +8,7 @@ pipeline {
 
     environment {
         DOCKER_IMAGE_GHCR = "ghcr.io/moez-it-dev/flutter_document_management_system"
-        DOCKER_IMAGE_HUB  = "moezitdev/flutter-dms"
+        DOCKER_IMAGE_HUB  = "moezdocker/flutter-dms"
         IMAGE_VERSION     = "${BUILD_NUMBER}"
     }
 
@@ -21,6 +21,15 @@ pipeline {
         stage('Checkout') {
             steps {
                 checkout scm
+            }
+        }
+        stage('Fix Flutter SDK Permissions') {
+            steps {
+                sh '''
+                    git config --global --add safe.directory /sdks/flutter
+                    chown -R root:root /sdks/flutter || true
+                    chmod -R u+w /sdks/flutter || true
+                '''
             }
         }
 
