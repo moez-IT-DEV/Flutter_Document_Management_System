@@ -1,15 +1,14 @@
 pipeline {
     agent {
         docker {
-            image 'ghcr.io/cirruslabs/flutter:3.29.0'
+            image 'cirrusci/flutter:3.29.0'   // ✅ الصورة الجديدة
             args '--privileged -v /var/run/docker.sock:/var/run/docker.sock'
         }
     }
 
     environment {
         HOME = '/tmp'
-        PUB_CACHE = '/tmp/.pub-cache'
-        FLUTTER_ROOT = '/sdks/flutter'
+        PUB_CACHE = '/tmp/.pub-cache'   // ذاكرة تخزين مؤقت قابلة للكتابة
         DOCKER_IMAGE_GHCR = "ghcr.io/moez-it-dev/flutter_document_management_system"
         DOCKER_IMAGE_HUB  = "moezdocker/flutter-dms"
         IMAGE_VERSION     = "${BUILD_NUMBER}"
@@ -24,18 +23,6 @@ pipeline {
         stage('Checkout') {
             steps {
                 checkout scm
-            }
-        }
-
-        stage('Fix Flutter SDK Permissions') {
-            steps {
-                sh '''
-                    git config --global --add safe.directory /sdks/flutter
-                    chown -R root:root /sdks/flutter || true
-                    chmod -R 777 /sdks/flutter || true
-                    mkdir -p /sdks/flutter/bin/cache
-                    chmod 777 /sdks/flutter/bin/cache
-                '''
             }
         }
 
