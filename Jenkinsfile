@@ -23,7 +23,7 @@ pipeline {
         // تحديد مجلد مؤقت لذاكرة التخزين المؤقت للحزم
         PUB_CACHE = '/tmp/.pub-cache'
         // متغيرات مسارات الصور
-        DOCKER_IMAGE_GHCR = "ghcr.io/moez-it-dev/flutter_document_management_system"
+        DOCKER_IMAGE_GHCR = "ghcr.io/moez-IT-DEV/Flutter_Document_Management_System"
         DOCKER_IMAGE_HUB  = "moezdocker/flutter-dms"
         // رقم البناء يستخدم كوسم افتراضي
         IMAGE_VERSION     = "${BUILD_NUMBER}"
