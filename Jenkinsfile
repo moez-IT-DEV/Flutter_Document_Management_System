@@ -7,9 +7,9 @@ pipeline {
     }
 
     environment {
-        // حل مشكلة كتابة إعدادات Git داخل الحاوية
         HOME = '/tmp'
-
+        PUB_CACHE = '/tmp/.pub-cache'
+        FLUTTER_ROOT = '/sdks/flutter'
         DOCKER_IMAGE_GHCR = "ghcr.io/moez-it-dev/flutter_document_management_system"
         DOCKER_IMAGE_HUB  = "moezdocker/flutter-dms"
         IMAGE_VERSION     = "${BUILD_NUMBER}"
@@ -27,13 +27,14 @@ pipeline {
             }
         }
 
-        // إصلاح صلاحيات Flutter SDK داخل الحاوية
         stage('Fix Flutter SDK Permissions') {
             steps {
                 sh '''
                     git config --global --add safe.directory /sdks/flutter
                     chown -R root:root /sdks/flutter || true
-                    chmod -R u+w /sdks/flutter || true
+                    chmod -R 777 /sdks/flutter || true
+                    mkdir -p /sdks/flutter/bin/cache
+                    chmod 777 /sdks/flutter/bin/cache
                 '''
             }
         }
@@ -46,22 +47,14 @@ pipeline {
 
         stage('Quality Checks') {
             parallel {
-                stage('Format') {
-                    steps { sh 'dart format --set-exit-if-changed lib test || true' }
-                }
-                stage('Analyze') {
-                    steps { sh 'flutter analyze --no-pub || true' }
-                }
-                stage('Test') {
-                    steps { sh 'flutter test || true' }
-                }
+                stage('Format') { steps { sh 'dart format --set-exit-if-changed lib test || true' } }
+                stage('Analyze') { steps { sh 'flutter analyze --no-pub || true' } }
+                stage('Test')    { steps { sh 'flutter test || true' } }
             }
         }
 
         stage('Build Web') {
-            when {
-                expression { params.BUILD_TYPE == 'web' || params.BUILD_TYPE == 'both' }
-            }
+            when { expression { params.BUILD_TYPE == 'web' || params.BUILD_TYPE == 'both' } }
             steps {
                 sh 'flutter build web --release'
                 stash includes: 'build/web/**', name: 'web-build'
@@ -69,9 +62,7 @@ pipeline {
         }
 
         stage('Build APK') {
-            when {
-                expression { params.BUILD_TYPE == 'apk' || params.BUILD_TYPE == 'both' }
-            }
+            when { expression { params.BUILD_TYPE == 'apk' || params.BUILD_TYPE == 'both' } }
             steps {
                 sh 'flutter build apk --release --split-per-abi'
                 stash includes: 'build/app/outputs/flutter-apk/*.apk', name: 'apk-build'
@@ -79,9 +70,7 @@ pipeline {
         }
 
         stage('Build & Push Docker Images') {
-            when {
-                expression { params.PUSH_DOCKER && (params.BUILD_TYPE == 'web' || params.BUILD_TYPE == 'both') }
-            }
+            when { expression { params.PUSH_DOCKER && (params.BUILD_TYPE == 'web' || params.BUILD_TYPE == 'both') } }
             steps {
                 script {
                     def dockerImageGHCR = "${DOCKER_IMAGE_GHCR}:${IMAGE_VERSION}"
@@ -112,14 +101,8 @@ pipeline {
     }
 
     post {
-        success {
-            echo "🚀 Pipeline succeeded! Version: ${IMAGE_VERSION}"
-        }
-        failure {
-            echo "❌ Pipeline failed. Check logs."
-        }
-        always {
-            cleanWs()
-        }
+        success { echo "🚀 Pipeline succeeded! Version: ${IMAGE_VERSION}" }
+        failure { echo "❌ Pipeline failed. Check logs." }
+        always  { cleanWs() }
     }
 }
