@@ -2,7 +2,6 @@ pipeline {
     agent {
         docker {
             image 'ghcr.io/cirruslabs/flutter:3.29.0'
-            // 🔑 -u 0 يجعل الحاوية تعمل كمستخدم root، ويحل مشكلة الصلاحيات
             args '--privileged -u 0 -v /var/run/docker.sock:/var/run/docker.sock'
         }
     }
@@ -30,6 +29,19 @@ pipeline {
 
         stage('Checkout') {
             steps { checkout scm }
+        }
+
+        // ✅ تثبيت Docker CLI داخل حاوية Flutter
+        stage('Install Docker CLI') {
+            steps {
+                sh '''
+                    if ! command -v docker &> /dev/null; then
+                        apt-get update -qq
+                        apt-get install -y -qq docker.io
+                    fi
+                    docker --version
+                '''
+            }
         }
 
         stage('Install Dependencies') {
@@ -96,7 +108,6 @@ pipeline {
         failure { echo "❌ Pipeline failed. Check logs." }
         always {
             script {
-                // تجنب خطأ hudson.FilePath إذا فشل الـ agent
                 try { cleanWs() } catch (Exception e) { echo "Workspace cleanup skipped: ${e.message}" }
             }
         }
