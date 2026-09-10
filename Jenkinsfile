@@ -81,14 +81,13 @@ pipeline {
 
                     sh "docker build -t ${dockerImageGHCR} -f Dockerfile ."
 
-                    // ✅ ID الخاص بـ GitHub Container Registry
                     docker.withRegistry('https://ghcr.io', '565422e5-4781-42fa-acab-960f06ddba7a') {
                         sh "docker tag ${dockerImageGHCR} ${dockerImageGHCRSha}"
                         sh "docker push ${dockerImageGHCR}"
                         sh "docker push ${dockerImageGHCRSha}"
                     }
 
-                    // ✅ ID الخاص بـ Docker Hub
+                  
                     docker.withRegistry('https://index.docker.io/v1/', '5f97b244-cc7f-4763-ab96-59de395b4623') {
                         sh "docker tag ${dockerImageGHCR} ${dockerImageHub}"
                         sh "docker push ${dockerImageHub}"
