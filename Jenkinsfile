@@ -23,6 +23,8 @@ pipeline {
     parameters {
         choice(name: 'BUILD_TYPE', choices: ['web', 'apk', 'both'], description: 'What to build?')
         booleanParam(name: 'PUSH_DOCKER', defaultValue: true, description: 'Push Docker images?')
+      
+        booleanParam(name: 'DEPLOY_K8S', defaultValue: false, description: 'Deploy to Kubernetes?')
     }
 
     stages {
@@ -87,11 +89,38 @@ pipeline {
                         sh "docker push ${dockerImageGHCRSha}"
                     }
 
-                  
                     docker.withRegistry('https://index.docker.io/v1/', '5f97b244-cc7f-4763-ab96-59de395b4623') {
                         sh "docker tag ${dockerImageGHCR} ${dockerImageHub}"
                         sh "docker push ${dockerImageHub}"
                     }
+                }
+            }
+        }
+
+     
+        stage('Deploy to Kubernetes') {
+            when {
+                expression {
+                    params.DEPLOY_K8S &&
+                    params.PUSH_DOCKER &&
+                    (params.BUILD_TYPE == 'web' || params.BUILD_TYPE == 'both')
+                }
+            }
+            steps {
+                withKubeConfig([credentialsId: 'kubeconfig-prod']) {
+                    sh """
+                     
+                        kubectl set image deployment/flutter-dms-web \
+                            web=${DOCKER_IMAGE_GHCR}:${IMAGE_VERSION} \
+                            -n dev
+                        
+                        
+                        kubectl rollout status deployment/flutter-dms-web -n dev --timeout=5m
+                        
+                       
+                        kubectl get pods -n dev
+                        kubectl get svc -n dev
+                    """
                 }
             }
         }
