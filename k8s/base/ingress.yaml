@@ -1,0 +1,25 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: flutter-dms-ingress
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod" # يتطلب تثبيت cert-manager
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - app.moezitdev.com
+    secretName: flutter-dms-tls
+  rules:
+  - host: app.moezitdev.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: flutter-dms-web-service
+            port:
+              number: 80
