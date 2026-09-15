@@ -14,17 +14,26 @@ pipeline {
 
     environment {
         HOME = '/root'
+        PUB_CACHE pipeline {
+    agent {
+        docker {
+            image 'ghcr.io/cirruslabs/flutter:3.29.0'
+            args '--privileged -u 0 -v /var/run/docker.sock:/var/run/docker.sock'
+        }
+    }
+
+    options {
+        disableConcurrentBuilds()
+        timeout(time: 60, unit: 'MINUTES')
+        timestamps()
+    }
+
+    environment {
+        HOME = '/root'
         PUB_CACHE = '/root/.pub-cache'
         DOCKER_IMAGE_GHCR = "ghcr.io/moez-it-dev/flutter_document_management_system"
         DOCKER_IMAGE_HUB  = "moezdocker/flutter-dms"
         IMAGE_VERSION     = "${BUILD_NUMBER}"
-    }
-
-    parameters {
-        choice(name: 'BUILD_TYPE', choices: ['web', 'apk', 'both'], description: 'What to build?')
-        booleanParam(name: 'PUSH_DOCKER', defaultValue: true, description: 'Push Docker images?')
-      
-        booleanParam(name: 'DEPLOY_K8S', defaultValue: false, description: 'Deploy to Kubernetes?')
     }
 
     stages {
@@ -58,7 +67,6 @@ pipeline {
         }
 
         stage('Build Web') {
-            when { expression { params.BUILD_TYPE == 'web' || params.BUILD_TYPE == 'both' } }
             steps {
                 sh 'flutter build web --release'
                 stash includes: 'build/web/**', name: 'web-build'
@@ -66,7 +74,7 @@ pipeline {
         }
 
         stage('Build APK') {
-            when { expression { params.BUILD_TYPE == 'apk' || params.BUILD_TYPE == 'both' } }
+            when { branch 'main' }
             steps {
                 sh 'flutter build apk --release --split-per-abi'
                 stash includes: 'build/app/outputs/flutter-apk/*.apk', name: 'apk-build'
@@ -74,7 +82,12 @@ pipeline {
         }
 
         stage('Build & Push Docker Images') {
-            when { expression { params.PUSH_DOCKER && (params.BUILD_TYPE == 'web' || params.BUILD_TYPE == 'both') } }
+            when {
+                anyOf {
+                    branch 'main'
+                    branch 'develop'
+                }
+            }
             steps {
                 script {
                     def dockerImageGHCR = "${DOCKER_IMAGE_GHCR}:${IMAGE_VERSION}"
@@ -97,30 +110,31 @@ pipeline {
             }
         }
 
-     
         stage('Deploy to Kubernetes') {
             when {
-                expression {
-                    params.DEPLOY_K8S &&
-                    params.PUSH_DOCKER &&
-                    (params.BUILD_TYPE == 'web' || params.BUILD_TYPE == 'both')
+                anyOf {
+                    branch 'main'
+                    branch 'develop'
                 }
             }
             steps {
-                withKubeConfig([credentialsId: 'kubeconfig-prod']) {
-                    sh """
-                     
-                        kubectl set image deployment/flutter-dms-web \
-                            web=${DOCKER_IMAGE_GHCR}:${IMAGE_VERSION} \
-                            -n dev
-                        
-                        
-                        kubectl rollout status deployment/flutter-dms-web -n dev --timeout=5m
-                        
-                       
-                        kubectl get pods -n dev
-                        kubectl get svc -n dev
-                    """
+                script {
+                    def namespace = (env.BRANCH_NAME == 'main') ? 'prod' : 'dev'
+                    def kubeCred  = (env.BRANCH_NAME == 'main') ? 'kubeconfig-prod' : 'kubeconfig-dev'
+                    
+                    echo "🚀 Deploying to ${namespace} from branch ${env.BRANCH_NAME}"
+                    
+                    withKubeConfig([credentialsId: kubeCred]) {
+                        sh """
+                            kubectl set image deployment/flutter-dms-web \
+                                web=${DOCKER_IMAGE_GHCR}:${IMAGE_VERSION} \
+                                -n ${namespace}
+                            
+                            kubectl rollout status deployment/flutter-dms-web -n ${namespace} --timeout=5m
+                            
+                            kubectl get pods -n ${namespace}
+                        """
+                    }
                 }
             }
         }
