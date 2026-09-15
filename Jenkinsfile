@@ -8,7 +8,7 @@ pipeline {
 
     options {
         disableConcurrentBuilds()
-        timeout(time: 60, unit: 'MINUTES')
+        timeout(time: 30, unit: 'MINUTES')
         timestamps()
     }
 
@@ -57,14 +57,6 @@ pipeline {
             }
         }
 
-        stage('Build APK') {
-            when { branch 'main' }
-            steps {
-                sh 'flutter build apk --release --split-per-abi'
-                stash includes: 'build/app/outputs/flutter-apk/*.apk', name: 'apk-build'
-            }
-        }
-
         stage('Build & Push Docker Images') {
             when {
                 anyOf {
@@ -78,6 +70,7 @@ pipeline {
                     def dockerImageGHCRSha = "${DOCKER_IMAGE_GHCR}:${IMAGE_VERSION}-${env.GIT_COMMIT?.take(7)}"
                     def dockerImageHub = "${DOCKER_IMAGE_HUB}:${IMAGE_VERSION}"
 
+                    echo "🐳 Building Docker image: ${dockerImageGHCR}"
                     sh "docker build -t ${dockerImageGHCR} -f Dockerfile ."
 
                     docker.withRegistry('https://ghcr.io', '565422e5-4781-42fa-acab-960f06ddba7a') {
@@ -90,6 +83,8 @@ pipeline {
                         sh "docker tag ${dockerImageGHCR} ${dockerImageHub}"
                         sh "docker push ${dockerImageHub}"
                     }
+                    
+                    echo "✅ Docker images pushed successfully"
                 }
             }
         }
@@ -107,6 +102,7 @@ pipeline {
                     def kubeCred  = (env.BRANCH_NAME == 'main') ? 'kubeconfig-prod' : 'kubeconfig-dev'
                     
                     echo "🚀 Deploying to ${namespace} from branch ${env.BRANCH_NAME}"
+                    echo "🔑 Using credential: ${kubeCred}"
                     
                     withKubeConfig([credentialsId: kubeCred]) {
                         sh """
@@ -116,7 +112,10 @@ pipeline {
                             
                             kubectl rollout status deployment/flutter-dms-web -n ${namespace} --timeout=5m
                             
+                            echo "📦 Current Pods:"
                             kubectl get pods -n ${namespace}
+                            
+                            echo "✅ Deployment complete!"
                         """
                     }
                 }
@@ -125,7 +124,7 @@ pipeline {
 
         stage('Archive Artifacts') {
             steps {
-                archiveArtifacts artifacts: 'build/app/outputs/flutter-apk/*.apk, build/web/**', fingerprint: true
+                archiveArtifacts artifacts: 'build/web/**', fingerprint: true
             }
         }
     }
@@ -135,7 +134,9 @@ pipeline {
         failure { echo "❌ Pipeline failed. Check logs." }
         always {
             script {
-                try { cleanWs() } catch (Exception e) { echo "Workspace cleanup skipped: ${e.message}" }
+                try { cleanWs() } catch (Exception e) { 
+                    echo "Workspace cleanup skipped: ${e.message}" 
+                }
             }
         }
     }
