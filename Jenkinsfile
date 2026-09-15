@@ -8,7 +8,7 @@ pipeline {
 
     options {
         disableConcurrentBuilds()
-        timeout(time: 30, unit: 'MINUTES')
+        timeout(time: 40, unit: 'MINUTES')
         timestamps()
     }
 
@@ -131,8 +131,8 @@ pipeline {
                                 web=${DOCKER_IMAGE_GHCR}:${IMAGE_VERSION} \
                                 -n ${namespace}
                             
-                            echo "⏳ Waiting for rollout..."
-                            kubectl rollout status deployment/flutter-dms-web -n ${namespace} --timeout=5m
+                            echo "⏳ Waiting for rollout (max 15 minutes)..."
+                            kubectl rollout status deployment/flutter-dms-web -n ${namespace} --timeout=15m
                             
                             echo "📦 Current Pods:"
                             kubectl get pods -n ${namespace}
