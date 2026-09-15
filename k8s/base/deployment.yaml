@@ -11,25 +11,30 @@ spec:
     rollingUpdate:
       maxSurge: 1
       maxUnavailable: 0
+  progressDeadlineSeconds: 600
   selector:
     matchLabels:
       app: flutter-dms-web
-  progressDeadlineSeconds: 600
   template:
     metadata:
       labels:
         app: flutter-dms-web
     spec:
-    imagePullSecrets:
-    - name: ghcr-secret
+      # ✅ imagePullSecrets في المكان الصحيح
+      imagePullSecrets:
+      - name: ghcr-secret
+      
+      # ✅ securityContext على مستوى Pod
       securityContext:
         runAsNonRoot: true
-        runAsUser: 101 # مستخدم nginx في صورة alpine
+        runAsUser: 101
         fsGroup: 101
+      
       containers:
       - name: web
         image: ghcr.io/moez-it-dev/flutter_document_management_system:latest
-        magePullPolicy: IfNotPresent
+        # ✅ تصحيح الخطأ الإملائي
+        imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 80
           name: http
@@ -59,12 +64,13 @@ spec:
             port: 80
           initialDelaySeconds: 15
           periodSeconds: 30
+        # ✅ securityContext على مستوى Container
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true
           capabilities:
             drop: ["ALL"]
-            add: ["NET_BIND_SERVICE"] # للسماح لـ Nginx بالعمل على المنفذ 80
+            add: ["NET_BIND_SERVICE"]
         volumeMounts:
         - name: nginx-cache
           mountPath: /var/cache/nginx
