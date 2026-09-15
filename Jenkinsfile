@@ -18,6 +18,7 @@ pipeline {
         DOCKER_IMAGE_GHCR = "ghcr.io/moez-it-dev/flutter_document_management_system"
         DOCKER_IMAGE_HUB  = "moezdocker/flutter-dms"
         IMAGE_VERSION     = "${BUILD_NUMBER}"
+        KUBECTL_VERSION   = "v1.29.0"
     }
 
     stages {
@@ -34,6 +35,28 @@ pipeline {
                         apt-get install -y -qq docker.io
                     fi
                     docker --version
+                '''
+            }
+        }
+
+        // ✅ المرحلة الجديدة: تثبيت kubectl
+        stage('Install kubectl') {
+            steps {
+                sh '''
+                    if ! command -v kubectl &> /dev/null; then
+                        echo "📦 Installing kubectl ${KUBECTL_VERSION}..."
+                        
+                        # تحميل kubectl
+                        curl -LO "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+                        
+                        # تثبيته
+                        chmod +x kubectl
+                        mv kubectl /usr/local/bin/kubectl
+                        
+                        echo "✅ kubectl installed"
+                    fi
+                    
+                    kubectl version --client
                 '''
             }
         }
@@ -106,10 +129,16 @@ pipeline {
                     
                     withKubeConfig([credentialsId: kubeCred]) {
                         sh """
+                            echo "📋 Verifying kubectl:"
+                            which kubectl
+                            kubectl version --client
+                            
+                            echo "🎯 Updating deployment image..."
                             kubectl set image deployment/flutter-dms-web \
                                 web=${DOCKER_IMAGE_GHCR}:${IMAGE_VERSION} \
                                 -n ${namespace}
                             
+                            echo "⏳ Waiting for rollout..."
                             kubectl rollout status deployment/flutter-dms-web -n ${namespace} --timeout=5m
                             
                             echo "📦 Current Pods:"
