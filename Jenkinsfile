@@ -43,11 +43,10 @@ pipeline {
             steps {
                 sh '''
                     if ! command -v kubectl &> /dev/null; then
-                        echo "📦 Installing kubectl ${KUBECTL_VERSION}..."
+                        echo "📦 Installing kubectl..."
                         curl -LO "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
                         chmod +x kubectl
                         mv kubectl /usr/local/bin/kubectl
-                        echo "✅ kubectl installed"
                     fi
                     kubectl version --client
                 '''
@@ -82,22 +81,28 @@ pipeline {
             }
             steps {
                 script {
-                    def dockerImageGHCR = "${DOCKER_IMAGE_GHCR}:${IMAGE_VERSION}"
-                    def dockerImageGHCRSha = "${DOCKER_IMAGE_GHCR}:${IMAGE_VERSION}-${env.GIT_COMMIT?.take(7)}"
-                    def dockerImageHub = "${DOCKER_IMAGE_HUB}:${IMAGE_VERSION}"
+                    def imageFull = "${DOCKER_IMAGE_GHCR}:${IMAGE_VERSION}"
+                    def imageSha  = "${DOCKER_IMAGE_GHCR}:${IMAGE_VERSION}-${env.GIT_COMMIT?.take(7)}"
+                    def imageHub  = "${DOCKER_IMAGE_HUB}:${IMAGE_VERSION}"
 
-                    echo "🐳 Building Docker image: ${dockerImageGHCR}"
-                    sh "docker build -t ${dockerImageGHCR} -f Dockerfile ."
+                    withEnv([
+                        "IMAGE_FULL=${imageFull}",
+                        "IMAGE_SHA=${imageSha}",
+                        "IMAGE_HUB=${imageHub}"
+                    ]) {
+                        echo "🐳 Building Docker image: ${imageFull}"
+                        sh 'docker build -t ${IMAGE_FULL} -f Dockerfile .'
 
-                    docker.withRegistry('https://ghcr.io', '565422e5-4781-42fa-acab-960f06ddba7a') {
-                        sh "docker tag ${dockerImageGHCR} ${dockerImageGHCRSha}"
-                        sh "docker push ${dockerImageGHCR}"
-                        sh "docker push ${dockerImageGHCRSha}"
-                    }
+                        docker.withRegistry('https://ghcr.io', '565422e5-4781-42fa-acab-960f06ddba7a') {
+                            sh 'docker tag ${IMAGE_FULL} ${IMAGE_SHA}'
+                            sh 'docker push ${IMAGE_FULL}'
+                            sh 'docker push ${IMAGE_SHA}'
+                        }
 
-                    docker.withRegistry('https://index.docker.io/v1/', '5f97b244-cc7f-4763-ab96-59de395b4623') {
-                        sh "docker tag ${dockerImageGHCR} ${dockerImageHub}"
-                        sh "docker push ${dockerImageHub}"
+                        docker.withRegistry('https://index.docker.io/v1/', '5f97b244-cc7f-4763-ab96-59de395b4623') {
+                            sh 'docker tag ${IMAGE_FULL} ${IMAGE_HUB}'
+                            sh 'docker push ${IMAGE_HUB}'
+                        }
                     }
                     
                     echo "✅ Docker images pushed successfully"
@@ -105,7 +110,6 @@ pipeline {
             }
         }
 
-        // ✅ المرحلة الجديدة: تحميل الصورة مباشرة إلى Minikube
         stage('Preload Image to Minikube') {
             when {
                 anyOf {
@@ -114,46 +118,47 @@ pipeline {
                 }
             }
             steps {
-                sh """
-                    set -e
-                    
-                    IMAGE="${DOCKER_IMAGE_GHCR}:${IMAGE_VERSION}"
-                    
-                    echo "📥 Saving image: \${IMAGE}"
-                    docker save \${IMAGE} -o /tmp/flutter-dms-image.tar
-                    
-                    echo "🔍 Finding Minikube container..."
-                    MINIKUBE_CTR=\$(docker ps --format "{{.Names}}" | grep -E "^minikube$" | head -1)
-                    
-                    if [ -z "\${MINIKUBE_CTR}" ]; then
-                        echo "⚠️  Minikube container not found - skipping preload"
-                        rm -f /tmp/flutter-dms-image.tar
-                        exit 0
-                    fi
-                    
-                    echo "📦 Copying image to Minikube container: \${MINIKUBE_CTR}"
-                    docker cp /tmp/flutter-dms-image.tar \${MINIKUBE_CTR}:/tmp/image.tar
-                    
-                    echo "🔄 Loading image into Minikube..."
-                    if docker exec \${MINIKUBE_CTR} sh -c 'command -v ctr' > /dev/null 2>&1; then
-                        # Containerd runtime (K8s 1.24+)
-                        docker exec \${MINIKUBE_CTR} ctr -n k8s.io images import /tmp/image.tar
-                        echo "✅ Image loaded via containerd"
-                    elif docker exec \${MINIKUBE_CTR} sh -c 'command -v docker' > /dev/null 2>&1; then
-                        # Docker runtime (older)
-                        docker exec \${MINIKUBE_CTR} docker load -i /tmp/image.tar
-                        echo "✅ Image loaded via docker"
-                    else
-                        echo "❌ No container runtime found in Minikube"
-                        exit 1
-                    fi
-                    
-                    echo "🧹 Cleanup..."
-                    docker exec \${MINIKUBE_CTR} rm -f /tmp/image.tar || true
-                    rm -f /tmp/flutter-dms-image.tar
-                    
-                    echo "✅ Image preloaded successfully to Minikube"
-                """
+                script {
+                    def imageFull = "${DOCKER_IMAGE_GHCR}:${IMAGE_VERSION}"
+                    withEnv(["IMAGE_FULL=${imageFull}"]) {
+                        sh '''
+                            set -e
+                            
+                            echo "📥 Saving image: ${IMAGE_FULL}"
+                            docker save "${IMAGE_FULL}" -o /tmp/flutter-dms-image.tar
+                            
+                            echo "🔍 Finding Minikube container..."
+                            MINIKUBE_CTR=$(docker ps --format '{{.Names}}' | grep -E '^minikube$' | head -1)
+                            
+                            if [ -z "${MINIKUBE_CTR}" ]; then
+                                echo "⚠️  Minikube container not found - skipping preload"
+                                rm -f /tmp/flutter-dms-image.tar
+                                exit 0
+                            fi
+                            
+                            echo "📦 Copying image to Minikube container: ${MINIKUBE_CTR}"
+                            docker cp /tmp/flutter-dms-image.tar "${MINIKUBE_CTR}:/tmp/image.tar"
+                            
+                            echo "🔄 Loading image into Minikube..."
+                            if docker exec "${MINIKUBE_CTR}" sh -c 'command -v ctr' > /dev/null 2>&1; then
+                                docker exec "${MINIKUBE_CTR}" ctr -n k8s.io images import /tmp/image.tar
+                                echo "✅ Image loaded via containerd"
+                            elif docker exec "${MINIKUBE_CTR}" sh -c 'command -v docker' > /dev/null 2>&1; then
+                                docker exec "${MINIKUBE_CTR}" docker load -i /tmp/image.tar
+                                echo "✅ Image loaded via docker"
+                            else
+                                echo "❌ No container runtime found in Minikube"
+                                exit 1
+                            fi
+                            
+                            echo "🧹 Cleanup..."
+                            docker exec "${MINIKUBE_CTR}" rm -f /tmp/image.tar || true
+                            rm -f /tmp/flutter-dms-image.tar
+                            
+                            echo "✅ Image preloaded successfully to Minikube"
+                        '''
+                    }
+                }
             }
         }
 
@@ -168,29 +173,35 @@ pipeline {
                 script {
                     def namespace = (env.BRANCH_NAME == 'main') ? 'prod' : 'dev'
                     def kubeCred  = (env.BRANCH_NAME == 'main') ? 'kubeconfig-prod' : 'kubeconfig-dev'
+                    def imageFull = "${DOCKER_IMAGE_GHCR}:${IMAGE_VERSION}"
                     
                     echo "🚀 Deploying to ${namespace} from branch ${env.BRANCH_NAME}"
                     echo "🔑 Using credential: ${kubeCred}"
                     
-                    withKubeConfig([credentialsId: kubeCred]) {
-                        sh """
-                            echo "📋 Verifying kubectl connectivity..."
-                            kubectl version --client
-                            kubectl cluster-info
-                            
-                            echo "🎯 Updating deployment image..."
-                            kubectl set image deployment/flutter-dms-web \
-                                web=${DOCKER_IMAGE_GHCR}:${IMAGE_VERSION} \
-                                -n ${namespace}
-                            
-                            echo "⏳ Waiting for rollout (max 15 minutes)..."
-                            kubectl rollout status deployment/flutter-dms-web -n ${namespace} --timeout=15m
-                            
-                            echo "📦 Current Pods:"
-                            kubectl get pods -n ${namespace}
-                            
-                            echo "✅ Deployment complete!"
-                        """
+                    withEnv([
+                        "NS=${namespace}",
+                        "IMAGE_FULL=${imageFull}"
+                    ]) {
+                        withKubeConfig([credentialsId: kubeCred]) {
+                            sh '''
+                                echo "📋 Verifying kubectl connectivity..."
+                                kubectl version --client
+                                kubectl cluster-info
+                                
+                                echo "🎯 Updating deployment image..."
+                                kubectl set image deployment/flutter-dms-web \
+                                    web="${IMAGE_FULL}" \
+                                    -n "${NS}"
+                                
+                                echo "⏳ Waiting for rollout (max 15 minutes)..."
+                                kubectl rollout status deployment/flutter-dms-web -n "${NS}" --timeout=15m
+                                
+                                echo "📦 Current Pods:"
+                                kubectl get pods -n "${NS}"
+                                
+                                echo "✅ Deployment complete!"
+                            '''
+                        }
                     }
                 }
             }
