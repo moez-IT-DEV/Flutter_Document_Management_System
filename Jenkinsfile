@@ -14,22 +14,6 @@ pipeline {
 
     environment {
         HOME = '/root'
-        PUB_CACHE pipeline {
-    agent {
-        docker {
-            image 'ghcr.io/cirruslabs/flutter:3.29.0'
-            args '--privileged -u 0 -v /var/run/docker.sock:/var/run/docker.sock'
-        }
-    }
-
-    options {
-        disableConcurrentBuilds()
-        timeout(time: 60, unit: 'MINUTES')
-        timestamps()
-    }
-
-    environment {
-        HOME = '/root'
         PUB_CACHE = '/root/.pub-cache'
         DOCKER_IMAGE_GHCR = "ghcr.io/moez-it-dev/flutter_document_management_system"
         DOCKER_IMAGE_HUB  = "moezdocker/flutter-dms"
