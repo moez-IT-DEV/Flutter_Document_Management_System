@@ -105,6 +105,58 @@ pipeline {
             }
         }
 
+        // ✅ المرحلة الجديدة: تحميل الصورة مباشرة إلى Minikube
+        stage('Preload Image to Minikube') {
+            when {
+                anyOf {
+                    branch 'main'
+                    branch 'develop'
+                }
+            }
+            steps {
+                sh """
+                    set -e
+                    
+                    IMAGE="${DOCKER_IMAGE_GHCR}:${IMAGE_VERSION}"
+                    
+                    echo "📥 Saving image: \${IMAGE}"
+                    docker save \${IMAGE} -o /tmp/flutter-dms-image.tar
+                    
+                    echo "🔍 Finding Minikube container..."
+                    MINIKUBE_CTR=\$(docker ps --format "{{.Names}}" | grep -E "^minikube$" | head -1)
+                    
+                    if [ -z "\${MINIKUBE_CTR}" ]; then
+                        echo "⚠️  Minikube container not found - skipping preload"
+                        rm -f /tmp/flutter-dms-image.tar
+                        exit 0
+                    fi
+                    
+                    echo "📦 Copying image to Minikube container: \${MINIKUBE_CTR}"
+                    docker cp /tmp/flutter-dms-image.tar \${MINIKUBE_CTR}:/tmp/image.tar
+                    
+                    echo "🔄 Loading image into Minikube..."
+                    if docker exec \${MINIKUBE_CTR} sh -c 'command -v ctr' > /dev/null 2>&1; then
+                        # Containerd runtime (K8s 1.24+)
+                        docker exec \${MINIKUBE_CTR} ctr -n k8s.io images import /tmp/image.tar
+                        echo "✅ Image loaded via containerd"
+                    elif docker exec \${MINIKUBE_CTR} sh -c 'command -v docker' > /dev/null 2>&1; then
+                        # Docker runtime (older)
+                        docker exec \${MINIKUBE_CTR} docker load -i /tmp/image.tar
+                        echo "✅ Image loaded via docker"
+                    else
+                        echo "❌ No container runtime found in Minikube"
+                        exit 1
+                    fi
+                    
+                    echo "🧹 Cleanup..."
+                    docker exec \${MINIKUBE_CTR} rm -f /tmp/image.tar || true
+                    rm -f /tmp/flutter-dms-image.tar
+                    
+                    echo "✅ Image preloaded successfully to Minikube"
+                """
+            }
+        }
+
         stage('Deploy to Kubernetes') {
             when {
                 anyOf {
