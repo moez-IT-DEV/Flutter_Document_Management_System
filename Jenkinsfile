@@ -2,7 +2,7 @@ pipeline {
     agent {
         docker {
             image 'ghcr.io/cirruslabs/flutter:3.29.0'
-            args '--privileged -u 0 -v /var/run/docker.sock:/var/run/docker.sock'
+            args '--privileged --network=host -u 0 -v /var/run/docker.sock:/var/run/docker.sock'
         }
     }
 
@@ -39,23 +39,16 @@ pipeline {
             }
         }
 
-        // ✅ المرحلة الجديدة: تثبيت kubectl
         stage('Install kubectl') {
             steps {
                 sh '''
                     if ! command -v kubectl &> /dev/null; then
                         echo "📦 Installing kubectl ${KUBECTL_VERSION}..."
-                        
-                        # تحميل kubectl
                         curl -LO "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
-                        
-                        # تثبيته
                         chmod +x kubectl
                         mv kubectl /usr/local/bin/kubectl
-                        
                         echo "✅ kubectl installed"
                     fi
-                    
                     kubectl version --client
                 '''
             }
@@ -129,9 +122,9 @@ pipeline {
                     
                     withKubeConfig([credentialsId: kubeCred]) {
                         sh """
-                            echo "📋 Verifying kubectl:"
-                            which kubectl
+                            echo "📋 Verifying kubectl connectivity..."
                             kubectl version --client
+                            kubectl cluster-info
                             
                             echo "🎯 Updating deployment image..."
                             kubectl set image deployment/flutter-dms-web \
