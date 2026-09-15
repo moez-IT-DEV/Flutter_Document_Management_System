@@ -18,7 +18,6 @@ pipeline {
         DOCKER_IMAGE_GHCR = "ghcr.io/moez-it-dev/flutter_document_management_system"
         DOCKER_IMAGE_HUB  = "moezdocker/flutter-dms"
         IMAGE_VERSION     = "${BUILD_NUMBER}"
-        KUBECTL_VERSION   = "v1.29.0"
     }
 
     stages {
@@ -43,8 +42,7 @@ pipeline {
             steps {
                 sh '''
                     if ! command -v kubectl &> /dev/null; then
-                        echo "📦 Installing kubectl..."
-                        curl -LO "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+                        curl -LO "https://dl.k8s.io/release/v1.29.0/bin/linux/amd64/kubectl"
                         chmod +x kubectl
                         mv kubectl /usr/local/bin/kubectl
                     fi
@@ -110,6 +108,7 @@ pipeline {
             }
         }
 
+        // ✅ الحل النهائي: تمرير الصورة مباشرة عبر pipe (بدون ملف وسيط)
         stage('Preload Image to Minikube') {
             when {
                 anyOf {
@@ -124,38 +123,28 @@ pipeline {
                         sh '''
                             set -e
                             
-                            echo "📥 Saving image: ${IMAGE_FULL}"
-                            docker save "${IMAGE_FULL}" -o /tmp/flutter-dms-image.tar
+                            echo "📥 Loading image directly into Minikube via pipe..."
+                            echo "Image: ${IMAGE_FULL}"
                             
-                            echo "🔍 Finding Minikube container..."
-                            MINIKUBE_CTR=$(docker ps --format '{{.Names}}' | grep -E '^minikube$' | head -1)
-                            
-                            if [ -z "${MINIKUBE_CTR}" ]; then
-                                echo "⚠️  Minikube container not found - skipping preload"
-                                rm -f /tmp/flutter-dms-image.tar
-                                exit 0
-                            fi
-                            
-                            echo "📦 Copying image to Minikube container: ${MINIKUBE_CTR}"
-                            docker cp /tmp/flutter-dms-image.tar "${MINIKUBE_CTR}:/tmp/image.tar"
-                            
-                            echo "🔄 Loading image into Minikube..."
-                            if docker exec "${MINIKUBE_CTR}" sh -c 'command -v ctr' > /dev/null 2>&1; then
-                                docker exec "${MINIKUBE_CTR}" ctr -n k8s.io images import /tmp/image.tar
+                            # ✅ الحل: pipe مباشر من docker save إلى ctr import داخل Minikube
+                            # لا ملف وسيط، لا مشاكل مسارات
+                            if docker exec minikube sh -c 'command -v ctr' > /dev/null 2>&1; then
+                                echo "🔄 Using containerd runtime..."
+                                docker save "${IMAGE_FULL}" | docker exec -i minikube ctr -n k8s.io images import -
                                 echo "✅ Image loaded via containerd"
-                            elif docker exec "${MINIKUBE_CTR}" sh -c 'command -v docker' > /dev/null 2>&1; then
-                                docker exec "${MINIKUBE_CTR}" docker load -i /tmp/image.tar
+                            elif docker exec minikube sh -c 'command -v docker' > /dev/null 2>&1; then
+                                echo "🔄 Using docker runtime..."
+                                docker save "${IMAGE_FULL}" | docker exec -i minikube docker load
                                 echo "✅ Image loaded via docker"
                             else
-                                echo "❌ No container runtime found in Minikube"
+                                echo "❌ No known runtime found in Minikube"
                                 exit 1
                             fi
                             
-                            echo "🧹 Cleanup..."
-                            docker exec "${MINIKUBE_CTR}" rm -f /tmp/image.tar || true
-                            rm -f /tmp/flutter-dms-image.tar
+                            echo "📋 Verifying image is present..."
+                            docker exec minikube ctr -n k8s.io images ls | grep flutter_document || echo "⚠️  Not found in ctr list"
                             
-                            echo "✅ Image preloaded successfully to Minikube"
+                            echo "✅ Preload complete"
                         '''
                     }
                 }
@@ -176,7 +165,6 @@ pipeline {
                     def imageFull = "${DOCKER_IMAGE_GHCR}:${IMAGE_VERSION}"
                     
                     echo "🚀 Deploying to ${namespace} from branch ${env.BRANCH_NAME}"
-                    echo "🔑 Using credential: ${kubeCred}"
                     
                     withEnv([
                         "NS=${namespace}",
@@ -193,8 +181,8 @@ pipeline {
                                     web="${IMAGE_FULL}" \
                                     -n "${NS}"
                                 
-                                echo "⏳ Waiting for rollout (max 15 minutes)..."
-                                kubectl rollout status deployment/flutter-dms-web -n "${NS}" --timeout=15m
+                                echo "⏳ Waiting for rollout (max 10 minutes)..."
+                                kubectl rollout status deployment/flutter-dms-web -n "${NS}" --timeout=10m
                                 
                                 echo "📦 Current Pods:"
                                 kubectl get pods -n "${NS}"
