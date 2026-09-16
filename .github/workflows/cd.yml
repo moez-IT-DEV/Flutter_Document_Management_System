@@ -11,7 +11,6 @@ permissions:
 
 jobs:
   build-and-deploy:
-    # ✅ Runner على حاسوبك (بدون labels مخصصة)
     runs-on: self-hosted
 
     steps:
@@ -30,12 +29,11 @@ jobs:
           echo "=== Docker ==="
           docker ps | head -3
 
-      - name: Configure kubeconfig
+      - name: Verify kubectl access
         run: |
-          mkdir -p $HOME/.kube
-          cp /home/moez/.kube/config $HOME/.kube/config
-          chmod 600 $HOME/.kube/config
+          ls -la $HOME/.kube/config
           kubectl cluster-info
+          kubectl get nodes
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
