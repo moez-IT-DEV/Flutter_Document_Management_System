@@ -20,11 +20,6 @@ spec:
       labels:
         app: flutter-dms-web
     spec:
-      # ✅ imagePullSecrets في المكان الصحيح
-      imagePullSecrets:
-      - name: ghcr-secret
-      
-      # ✅ securityContext على مستوى Pod
       securityContext:
         runAsNonRoot: true
         runAsUser: 101
@@ -32,9 +27,8 @@ spec:
       
       containers:
       - name: web
-        image: ghcr.io/moez-it-dev/flutter_document_management_system:latest
-        # ✅ تصحيح الخطأ الإملائي
-        imagePullPolicy: IfNotPresent
+        image: moezdocker/flutter-dms:latest
+        imagePullPolicy: Always
         ports:
         - containerPort: 80
           name: http
@@ -64,7 +58,6 @@ spec:
             port: 80
           initialDelaySeconds: 15
           periodSeconds: 30
-        # ✅ securityContext على مستوى Container
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true
@@ -76,8 +69,16 @@ spec:
           mountPath: /var/cache/nginx
         - name: nginx-run
           mountPath: /var/run
+        - name: nginx-log
+          mountPath: /var/log/nginx
+        - name: nginx-tmp
+          mountPath: /tmp
       volumes:
       - name: nginx-cache
         emptyDir: {}
       - name: nginx-run
+        emptyDir: {}
+      - name: nginx-log
+        emptyDir: {}
+      - name: nginx-tmp
         emptyDir: {}
