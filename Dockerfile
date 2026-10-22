@@ -1,5 +1,5 @@
 
-ARG FLUTTER_VERSION==3.44.0
+ARG FLUTTER_VERSION=3.44.0
 FROM ghcr.io/cirruslabs/flutter:${FLUTTER_VERSION} AS builder
 
 WORKDIR /app
