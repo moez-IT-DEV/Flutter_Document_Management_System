@@ -1,26 +1,173 @@
-      # 1. فحص حاجب: يفشل البناء عند وجود ثغرات CRITICAL أو HIGH
-      - name: Trivy (Blocking Gate)
-        uses: aquasecurity/trivy-action@0.36.0  # استخدم commit SHA بدلاً من tag
+name: Security Scanning
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    - cron: '0 6 * * 1'   # كل اثنين 06:00 UTC
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  security-events: write
+  pull-requests: write
+
+jobs:
+  trivy-scan:
+    name: Trivy (Container + Filesystem)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t flutter-dms:scan .
+
+      # بوابة حاجزة: تفشل عند وجود ثغرات حرجة
+      - name: Trivy image scan (Blocking Gate)
+        uses: aquasecurity/trivy-action@0.36.0
         with:
           image-ref: 'flutter-dms:scan'
           severity: 'CRITICAL,HIGH'
-          exit-code: '1'          # 🔴 هذا هو التغيير الجوهري
-          ignore-unfixed: true    # تجاهل الثغرات التي لا يوجد لها إصلاح
+          exit-code: '1'
+          ignore-unfixed: true
           format: 'table'
 
-      # 2. فحص غير حاجب: يرفع SARIF إلى Security tab للرؤية
-      - name: Trivy (SARIF Report)
-        uses: aquasecurity/trivy-action@0.36.0
+      # تقرير SARIF للرؤية في Security tab (لا يفشل)
+      - name: Trivy image scan (SARIF Report)
         if: always()
+        uses: aquasecurity/trivy-action@0.36.0
         with:
           image-ref: 'flutter-dms:scan'
           severity: 'CRITICAL,HIGH'
           exit-code: '0'
           format: 'sarif'
-          output: 'trivy-results.sarif'
+          output: 'trivy-image.sarif'
 
-      - name: Upload SARIF
+      - name: Trivy filesystem scan (SARIF)
+        if: always()
+        uses: aquasecurity/trivy-action@0.36.0
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '0'
+          format: 'sarif'
+          output: 'trivy-fs.sarif'
+
+      - name: Upload Trivy image SARIF
+        if: always() && hashFiles('trivy-image.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v4.39.0
+        with:
+          sarif_file: 'trivy-image.sarif'
+          category: trivy-image
+
+      - name: Upload Trivy filesystem SARIF
+        if: always() && hashFiles('trivy-fs.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v4.39.0
+        with:
+          sarif_file: 'trivy-fs.sarif'
+          category: trivy-fs
+
+  gitleaks-scan:
+    name: Gitleaks (Secret Detection)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  semgrep-sast:
+    name: Semgrep (SAST)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Semgrep
+        run: python3 -m pip install --upgrade semgrep
+
+      - name: Run Semgrep
+        run: |
+          semgrep --config=p/default \
+                  --config=p/secrets \
+                  --config=p/owasp-top-ten \
+                  --sarif --output=semgrep.sarif \
+                  --error || true
+
+      - name: Upload Semgrep SARIF
+        if: always() && hashFiles('semgrep.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v4.39.0
+        with:
+          sarif_file: 'semgrep.sarif'
+          category: semgrep
+
+  k8s-manifest-scan:
+    name: Kube-Linter (K8s Manifests)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check if k8s directory exists
+        id: check_k8s
+        run: |
+          if [ -d "k8s" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Kube-Linter
+        if: steps.check_k8s.outputs.exists == 'true'
+        uses: stackrox/kube-linter-action@v1
+        with:
+          directory: k8s/
+          format: sarif
+          output-file: kube-linter.sarif
+
+      - name: Upload Kube-Linter SARIF
+        if: always() && hashFiles('kube-linter.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v4.39.0
+        with:
+          sarif_file: 'kube-linter.sarif'
+          category: kube-linter
+
+  scorecard:
+    name: OpenSSF Scorecard
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      id-token: write
+      contents: read
+      actions: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Run Scorecard
+        uses: ossf/scorecard-action@v2.4.0
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
+
+      - name: Upload Scorecard SARIF
         uses: github/codeql-action/upload-sarif@v4.39.0
         if: always()
         with:
-          sarif_file: 'trivy-results.sarif'
+          sarif_file: results.sarif
+          category: scorecard
