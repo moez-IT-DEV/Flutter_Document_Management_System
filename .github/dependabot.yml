@@ -1,6 +1,5 @@
 version: 2
 updates:
-  # Flutter / Dart dependencies
   - package-ecosystem: "pub"
     directory: "/"
     schedule:
@@ -22,7 +21,6 @@ updates:
           - "minor"
           - "patch"
 
-  # GitHub Actions used in .github/workflows/
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
@@ -43,3 +41,18 @@ updates:
         update-types:
           - "minor"
           - "patch"
+
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Africa/Tunis"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "docker"
+    commit-message:
+      prefix: "build"
+      include: "scope"
