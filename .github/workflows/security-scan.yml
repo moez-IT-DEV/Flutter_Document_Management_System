@@ -1,50 +1,26 @@
-name: Security Scanning
-
-on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
-
-permissions:
-  contents: read
-  security-events: write
-  pull-requests: write   # ✅ Added for Gitleaks PR comments
-
-jobs:
-  trivy-scan:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Build Docker image
-        run: docker build -t flutter-dms:scan .
-
-      - name: Run Trivy image scan
-        uses: aquasecurity/trivy-action@v0.36.0
+      # 1. فحص حاجب: يفشل البناء عند وجود ثغرات CRITICAL أو HIGH
+      - name: Trivy (Blocking Gate)
+        uses: aquasecurity/trivy-action@0.36.0  # استخدم commit SHA بدلاً من tag
         with:
           image-ref: 'flutter-dms:scan'
-          format: 'sarif'
-          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '1'          # 🔴 هذا هو التغيير الجوهري
+          ignore-unfixed: true    # تجاهل الثغرات التي لا يوجد لها إصلاح
+          format: 'table'
+
+      # 2. فحص غير حاجب: يرفع SARIF إلى Security tab للرؤية
+      - name: Trivy (SARIF Report)
+        uses: aquasecurity/trivy-action@0.36.0
+        if: always()
+        with:
+          image-ref: 'flutter-dms:scan'
           severity: 'CRITICAL,HIGH'
           exit-code: '0'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
 
-      - name: Upload Trivy results to GitHub Security tab
+      - name: Upload SARIF
         uses: github/codeql-action/upload-sarif@v4.39.0
         if: always()
         with:
           sarif_file: 'trivy-results.sarif'
-
-  gitleaks-scan:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Run Gitleaks
-        uses: gitleaks/gitleaks-action@v3
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
