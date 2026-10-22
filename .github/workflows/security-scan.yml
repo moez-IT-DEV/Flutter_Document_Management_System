@@ -9,6 +9,7 @@ on:
 permissions:
   contents: read
   security-events: write
+  pull-requests: write   # ✅ Added for Gitleaks PR comments
 
 jobs:
   trivy-scan:
