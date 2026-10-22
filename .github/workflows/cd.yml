@@ -1,4 +1,4 @@
-name: CD - Build & Deploy to Local K8s
+name: CD - Build, Scan, Sign & Deploy to Local K8s
 
 on:
   push:
@@ -7,10 +7,24 @@ on:
 
 permissions:
   contents: read
-  packages: write
+  packages: write        # push to GHCR
+  id-token: write        # Cosign keyless signing (GitHub OIDC)
+  security-events: write # upload SARIF to Security tab
+
+concurrency:
+  group: cd-${{ github.ref }}
+  cancel-in-progress: false   # لا تقطع نشراً جارياً
+
+env:
+  DOCKER_IMAGE: moezdocker/flutter-dms
+  FLUTTER_VERSION: '3.44.0'
+  K8S_NAMESPACE: prod
+  K8S_DEPLOYMENT: flutter-dms-web
+  K8S_CONTAINER: web
 
 jobs:
   build-and-deploy:
+    name: Build → Scan → Sign → Deploy
     runs-on: self-hosted
 
     steps:
@@ -38,7 +52,7 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.44.0'
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: 'stable'
 
       - name: Install dependencies
@@ -61,51 +75,160 @@ jobs:
           password: ${{ secrets.DOCKER_HUB_TOKEN }}
 
       - name: Build & Push Docker Images
+        id: build
         run: |
           REPO_LOWER=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')
           IMAGE_GHCR="ghcr.io/${REPO_LOWER}:${{ github.run_number }}"
-          IMAGE_HUB="moezdocker/flutter-dms:${{ github.run_number }}"
-          IMAGE_HUB_LATEST="moezdocker/flutter-dms:latest"
-          
+          IMAGE_HUB="${DOCKER_IMAGE}:${{ github.run_number }}"
+          IMAGE_HUB_LATEST="${DOCKER_IMAGE}:latest"
+
           echo "🐳 Building: $IMAGE_HUB"
           docker build -t $IMAGE_GHCR -t $IMAGE_HUB -t $IMAGE_HUB_LATEST .
-          
+
+          echo "📤 Pushing to GHCR + Docker Hub..."
           docker push $IMAGE_GHCR
           docker push $IMAGE_HUB
           docker push $IMAGE_HUB_LATEST
-          
+
+          # استخراج الـ digest الخاص بـ Docker Hub (للتوقيع والـ attestation)
+          DIGEST=$(docker inspect --format='{{range .RepoDigests}}{{println .}}{{end}}' $IMAGE_HUB \
+                   | grep "${DOCKER_IMAGE}@" | head -1 | cut -d@ -f2)
+
+          if [ -z "$DIGEST" ]; then
+            echo "❌ Could not extract image digest"
+            exit 1
+          fi
+
           echo "IMAGE_HUB=$IMAGE_HUB" >> $GITHUB_ENV
-          echo "✅ Images pushed"
+          echo "IMAGE_HUB_LATEST=$IMAGE_HUB_LATEST" >> $GITHUB_ENV
+          echo "IMAGE_DIGEST=$DIGEST" >> $GITHUB_ENV
+          echo "image_ref=$IMAGE_HUB@$DIGEST" >> $GITHUB_OUTPUT
+
+          echo "✅ Images pushed. Digest: $DIGEST"
+
+      # ─────────────────────────────────────────────
+      # 🔒 SECURITY GATES (قبل النشر)
+      # ─────────────────────────────────────────────
+
+      - name: Trivy scan (Blocking Gate — CRITICAL only)
+        uses: aquasecurity/trivy-action@0.36.0
+        with:
+          image-ref: ${{ env.IMAGE_HUB }}@${{ env.IMAGE_DIGEST }}
+          severity: 'CRITICAL'
+          exit-code: '1'
+          ignore-unfixed: true
+          format: 'table'
+
+      - name: Trivy scan (SARIF Report — no block)
+        if: always()
+        uses: aquasecurity/trivy-action@0.36.0
+        with:
+          image-ref: ${{ env.IMAGE_HUB }}@${{ env.IMAGE_DIGEST }}
+          severity: 'CRITICAL,HIGH'
+          exit-code: '0'
+          format: 'sarif'
+          output: 'trivy-cd.sarif'
+
+      - name: Upload Trivy SARIF
+        if: always() && hashFiles('trivy-cd.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v4.39.0
+        with:
+          sarif_file: 'trivy-cd.sarif'
+          category: trivy-cd
+
+      - name: Generate SBOM (SPDX)
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.IMAGE_HUB }}@${{ env.IMAGE_DIGEST }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+          artifact-name: sbom-spdx
+          upload-artifact: false
+
+      - name: Generate SBOM (CycloneDX)
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.IMAGE_HUB }}@${{ env.IMAGE_DIGEST }}
+          format: cyclonedx-json
+          output-file: sbom.cyclonedx.json
+          artifact-name: sbom-cyclonedx
+          upload-artifact: false
+
+      - name: Upload SBOM artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: |
+            sbom.spdx.json
+            sbom.cyclonedx.json
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: 'v2.4.1'
+
+      - name: Sign image (keyless via GitHub OIDC)
+        run: |
+          echo "🔐 Signing $IMAGE_HUB@$IMAGE_DIGEST"
+          cosign sign --yes ${{ env.IMAGE_HUB }}@${{ env.IMAGE_DIGEST }}
+          echo "✅ Image signed"
+
+      - name: Attest SBOM to image
+        run: |
+          echo "📎 Attesting SBOM (SPDX) to image"
+          cosign attest --yes \
+            --predicate sbom.spdx.json \
+            --type spdxjson \
+            ${{ env.IMAGE_HUB }}@${{ env.IMAGE_DIGEST }}
+          echo "✅ SBOM attested"
+
+      # ─────────────────────────────────────────────
+      # 🚀 DEPLOY
+      # ─────────────────────────────────────────────
 
       - name: Load image to Minikube
         run: |
           echo "📥 Loading image into Minikube: $IMAGE_HUB"
-          
           if docker exec minikube sh -c 'command -v ctr' > /dev/null 2>&1; then
             docker save $IMAGE_HUB | docker exec -i minikube ctr -n k8s.io images import -
-            echo "✅ Loaded via containerd"
+            echo "✅ Loaded via containerd (fast path)"
+          else
+            echo "⚠️ ctr not found — falling back to minikube image load (slower)"
+            minikube image load $IMAGE_HUB
+            echo "✅ Loaded via minikube image load"
           fi
 
       - name: Deploy to Kubernetes
         run: |
-          echo "🚀 Deploying $IMAGE_HUB to prod..."
-          
-          kubectl set image deployment/flutter-dms-web \
-            web=$IMAGE_HUB \
-            -n prod
-          
-          kubectl rollout status deployment/flutter-dms-web \
-            -n prod --timeout=5m
-          
+          echo "🚀 Deploying $IMAGE_HUB to ${K8S_NAMESPACE}..."
+
+          kubectl set image deployment/${K8S_DEPLOYMENT} \
+            ${K8S_CONTAINER}=$IMAGE_HUB \
+            -n ${K8S_NAMESPACE}
+
+          kubectl rollout status deployment/${K8S_DEPLOYMENT} \
+            -n ${K8S_NAMESPACE} --timeout=5m
+
           echo "📦 Current Pods:"
-          kubectl get pods -n prod
-          
+          kubectl get pods -n ${K8S_NAMESPACE}
+
           echo "✅ Deployment complete!"
 
       - name: Summary
         if: always()
         run: |
-          echo "## 🚀 Deployment Summary" >> $GITHUB_STEP_SUMMARY
-          echo "- **Status**: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Image**: moezdocker/flutter-dms:${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Runner**: solve-node" >> $GITHUB_STEP_SUMMARY
+          echo "## 🚀 CD Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Item | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Status** | ${{ job.status }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Image** | \`${IMAGE_HUB}:${{ github.run_number }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Digest** | \`${IMAGE_DIGEST:-N/A}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Namespace** | ${K8S_NAMESPACE} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Runner** | self-hosted |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🛡️ Security Gates" >> $GITHUB_STEP_SUMMARY
+          echo "- Trivy CRITICAL scan (blocking)" >> $GITHUB_STEP_SUMMARY
+          echo "- SBOM generated (SPDX + CycloneDX)" >> $GITHUB_STEP_SUMMARY
+          echo "- Image signed with Cosign (keyless)" >> $GITHUB_STEP_SUMMARY
+          echo "- SBOM attested to image" >> $GITHUB_STEP_SUMMARY
