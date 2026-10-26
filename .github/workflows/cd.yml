@@ -131,7 +131,7 @@ jobs:
 
       - name: Upload Trivy SARIF
         if: always() && hashFiles('trivy-cd.sarif') != ''
-        uses: github/codeql-action/upload-sarif@v4.39.0
+        uses: github/codeql-action/upload-sarif@v4.39.1
         with:
           sarif_file: 'trivy-cd.sarif'
           category: trivy-cd
